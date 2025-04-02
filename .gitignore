@@ -2,3 +2,5 @@
 *.sdf
 *.smi
 todo.md
+*.log
+*.pdb
