@@ -8,6 +8,13 @@ from datetime import datetime
 from rdkit.Chem import Recap
 import pubchempy as pcp
 
+st.set_page_config(
+    page_title="REINVENTer 4 Drug Discovery",
+    page_icon=":pill:",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
 # Streamlit app
 st.title("REINVENTer 4 Drug Discovery")
 st.text("- De Novo Molecular Design with AI by AZ -")
@@ -16,19 +23,28 @@ st.markdown("---")  # Add a horizontal rule (line)
 
 # Set up directories relative to the script's location
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
-reinvent_dir = os.path.join(script_dir, "~/Documents/apps/REINVENT4")  # Adjusted REINVENT4 directory path
+home_dir = os.path.expanduser("~")  # Get the user's home directory
+reinvent_dir = os.path.join(home_dir, "Documents/apps/REINVENT4")  # Adjusted REINVENT4 directory path
 wd = os.path.join(reinvent_dir, "wd")  # Working directory path
 os.makedirs(wd, exist_ok=True)  # Create directory if it doesn't exist
-st.text(f"Working directory: {wd}")
-# ...existing code...
+input_dir = os.path.join(wd, 'input')  # Input directory path
+os.makedirs(input_dir, exist_ok=True)  # Create input directory if it doesn't exist
+model_dir = os.path.join(wd, 'model')  # Model directory path
+os.makedirs(model_dir, exist_ok=True)  # Create model directory if it doesn't exist
+results_dir = os.path.join(wd, 'results')  # Results directory path
+os.makedirs(results_dir, exist_ok=True)  # Create results directory if it doesn't exist
+toml_dir = os.path.join(wd, 'toml')  # TOML directory path
+os.makedirs(toml_dir, exist_ok=True)  # Create TOML directory if it doesn't exist
+sampling_log = os.path.join(results_dir, 'log')  # Sampling log directory path
+os.makedirs(sampling_log, exist_ok=True)  # Create sampling log directory if it doesn't exist
 
-# Update paths to be relative to the script's directory
-toml_dir = os.path.join(wd, 'toml')
-input = os.path.join(wd, 'input')
-results_dir = os.path.join(wd, 'results')
-sampling_log = os.path.join(results_dir, 'log')
-model = os.path.join(wd, 'model')
-model_log = os.path.join(model, 'log')
+# # Update paths to be relative to the script's directory
+# toml_dir = os.path.join(wd, 'toml')
+# input = os.path.join(wd, 'input')
+# results_dir = os.path.join(wd, 'results')
+# sampling_log = os.path.join(results_dir, 'log')
+# model = os.path.join(wd, 'model')
+# model_log = os.path.join(model, 'log')
 
 priors_dir = os.path.join(reinvent_dir, "priors")
 reinvent = os.path.join(priors_dir, "reinvent.prior")
@@ -42,18 +58,92 @@ mol2mol_scaffold = os.path.join(priors_dir, "mol2mol_scaffold.prior")
 mol2mol_similarity = os.path.join(priors_dir, "mol2mol_similarity.prior")
 pubchem = os.path.join(priors_dir, "pubchem_ecfp4_with_count_with_rank_reinvent4_dict_voc.prior")
 
+
+# Main app logic
+# # de novo molecular sampling
+# st.header("De Novo Molecular Sampling")
+# if st.button("Run Sampling"):
+#     if not os.path.exists(model_file):
+#         st.error("Model file does not exist!")
+#     else:
+#         st.info("Generating TOML file...")
+#         toml_path, output_file = generate_toml(model_file, num_smiles, device)
+#         st.info("Running REINVENT4...")
+#         run_reinvent(toml_path)
+#         st.success("Sampling completed!")
+#         st.info("Displaying sampled molecules...")
+#         st.image(display_molecules(output_file))
+# st.markdown("---")  # Add a horizontal rule (line)
+
+# Fetch SMILES from PubChem
+st.header("Fetch SMILES from PubChem")
+compound_name = st.text_input("Enter compound name", value="ruxolitinib")
+if st.button("Fetch SMILES from PubChem into text_area"):
+    try:
+        smiles = pcp.get_compounds(compound_name, 'name')[0].isomeric_smiles
+        # st.success(f"SMILES for {compound_name}: {smiles}")
+    except Exception as e:
+        st.error(f"Error fetching SMILES for {compound_name}: {e}")
+else:
+    smiles = "C1CCC(C1)[C@@H](CC#N)N2C=C(C=N2)C3=C4C=CNC4=NC=N3"  # Default blank
+
+# Display fetched SMILES
+smiles = st.text_area("enter SMILES", value=smiles, height=68)
+st.image(Draw.MolToImage(Chem.MolFromSmiles(smiles), size=(300, 300)), caption="Parent Molecule")
+
+# save SMILES of parent molecule from text_area
+with open(f"{input_dir}/parent.smi", "w") as f:
+    f.write(f"{smiles}\n")
+
+# Recap decomposition and molecule visualization
+st.header("Recap Decomposition and Visualization")
+
+mol = Chem.MolFromSmiles(smiles)
+recap_tree = Recap.RecapDecompose(mol)
+warhead_mols = []
+warhead_smiless = []
+child_mols = []
+child_smiless = []
+
+# ダミー原子にatom map番号を付ける関数
+def relabel_dummy_atoms(mol, map_num=1):
+    """mol内のすべてのダミー原子(*)にatom map番号を付ける → [*:1]形式に"""
+    rw_mol = Chem.RWMol(mol)
+    for atom in rw_mol.GetAtoms():
+        if atom.GetAtomicNum() == 0:  # dummy atom (*)
+            atom.SetAtomMapNum(map_num)
+    return rw_mol.GetMol()
+
+# 分子を1stepだけ分解し、ラベルを変換
+for smiles, node in recap_tree.children.items():
+    mol = node.mol
+    warhead_mols.append(mol)
+    warhead_smiless.append(Chem.MolToSmiles(mol))
+    modified = relabel_dummy_atoms(mol, map_num=1)
+    child_mols.append(modified)
+    child_smiless.append(Chem.MolToSmiles(modified))
+
+BB_namelist = [f'BB{i+1}' for i in range(len(warhead_mols))]
+st.image(Draw.MolsToGridImage(warhead_mols, molsPerRow=3, subImgSize=(600,300), legends=BB_namelist))
+
+
+
 # Sidebar for input parameters
 st.sidebar.text("Current directory: ")
 st.sidebar.text(os.getcwd())
+st.sidebar.text("Working directory: ")
+st.sidebar.text(wd)
 st.sidebar.header("Sampling Parameters")
 num_smiles = st.sidebar.number_input("Number of SMILES", min_value=1, value=155)
 device = st.sidebar.selectbox("Device", ["mps", "cpu", "cuda"])
 
+unique_molecules = st.sidebar.checkbox("Unique Molecules", value=True)
+randomize_smiles = st.sidebar.checkbox("Randomize SMILES", value=True)
+overwrite = st.sidebar.checkbox("Overwrite", value=True)
+
+st.sidebar.markdown('## mol2mol sampling')
 # Allow users to select a model file from priors_dir
 model_files = {
-    "Reinvent": reinvent,
-    "LibInvent": lib,
-    "LinkInvent": link,
     "Mol2Mol High Similarity": mol2mol_high,
     "Mol2Mol Medium Similarity": mol2mol_med,
     "Mol2Mol MMP": mol2mol_mmp,
@@ -61,14 +151,23 @@ model_files = {
     "Mol2Mol Scaffold": mol2mol_scaffold,
     "Mol2Mol Similarity": mol2mol_similarity,
     "PubChem": pubchem,
+    "Reinvent": reinvent,
 }
 model_file = st.sidebar.selectbox("Model File", options=model_files.keys(), format_func=lambda x: x)
 selected_model_file = model_files[model_file]
 
-unique_molecules = st.sidebar.checkbox("Unique Molecules", value=True)
-randomize_smiles = st.sidebar.checkbox("Randomize SMILES", value=True)
+import datetime
+# Get the current timestamp
+now = datetime.datetime.now()
+# Format the timestamp as a string
+time = now.strftime("%Y%m%d_%H%M")
 
-st.sidebar.markdown('## only for mol2mol')
+if overwrite is True:
+    filename = model_file.split("/")[-1].replace(" ", "_")
+else:
+    filename = model_file.split("/")[-1].replace(" ", "_") + '_' + time
+
+# other options for mol2mol sampling
 sample_stategy = st.sidebar.selectbox("Sampling Strategy", ["beamsearch", 'multinomial'])
 temperature = st.sidebar.number_input("Temperature", min_value=0.0, max_value=1.0, value=1.0, step=0.1)
 
@@ -105,68 +204,32 @@ def display_molecules(csv_file):
     img = Draw.MolsToGridImage(df.sample(min(len(df), 30)).Mol.tolist(), molsPerRow=5, subImgSize=(300, 200))
     return img
 
-# Main app logic
-# de novo molecular sampling
-st.header("De Novo Molecular Sampling")
-if st.button("Run Sampling"):
-    if not os.path.exists(model_file):
-        st.error("Model file does not exist!")
-    else:
-        st.info("Generating TOML file...")
-        toml_path, output_file = generate_toml(model_file, num_smiles, device)
-        st.info("Running REINVENT4...")
-        run_reinvent(toml_path)
-        st.success("Sampling completed!")
-        st.info("Displaying sampled molecules...")
-        st.image(display_molecules(output_file))
-st.markdown("---")  # Add a horizontal rule (line)
-
-# Fetch SMILES from PubChem
-st.header("Fetch SMILES from PubChem")
-compound_name = st.text_input("Enter compound name", value="MMAE")
-if st.button("Fetch SMILES"):
-    try:
-        smiles = pcp.get_compounds(compound_name, 'name')[0].isomeric_smiles
-        st.success(f"SMILES for {compound_name}: {smiles}")
-    except Exception as e:
-        st.error(f"Error fetching SMILES for {compound_name}: {e}")
+# LibInvent用の親分子を選択
+st.sidebar.markdown('## LibInvent')
+selected_child = st.sidebar.multiselect(
+    "Select Child Molecule", options=BB_namelist, default=["BB1"], key="child_multiselect"
+)
+if selected_child:
+    selected_child_index = BB_namelist.index(selected_child[0])
+    selected_child_smiles = child_smiless[selected_child_index]
+    with open(f"{input_dir}/child.smi", "w") as f:
+        f.write(f"{selected_child_smiles}\n")
 else:
-    smiles = ""  # Default blank
+    selected_child_smiles = ""
+    st.sidebar.text("No parent selected.")
 
-# Display fetched SMILES
-st.text_area("Fetched SMILES", value=smiles, height=68)
+# LinkInvent用のwarheadを選択
+st.sidebar.markdown('## LinkInvent')
+selected_warhead = st.sidebar.multiselect(
+    "Select Warhead", options=BB_namelist, default=["BB1", "BB2"], key="warhead_multiselect"
+)
+if selected_warhead:
+    selected_warhead_indices = [BB_namelist.index(w) for w in selected_warhead]
+    selected_warhead_smiles_list = [warhead_smiless[i] for i in selected_warhead_indices]
+    # st.sidebar.text(f"Selected Warhead SMILES: {' | '.join(selected_warhead_smiles_list)}")
+    with open(f"{input_dir}/warheads.smi", "w") as f:
+        f.write('|'.join(selected_warhead_smiles_list))
+else:
+    selected_warhead_smiles = ""
+    st.sidebar.text("No warhead selected.")
 
-# Recap decomposition and molecule visualization
-st.header("Recap Decomposition and Visualization")
-if st.button("Run Recap Decomposition"):
-    try:
-        mol = Chem.MolFromSmiles(smiles)
-        recap_tree = Recap.RecapDecompose(mol)
-        modified_mols = []
-        modified_smiles = []
-
-        # Function to relabel dummy atoms for LibInvent
-        def relabel_dummy_atoms(mol, map_num=1):
-            rw_mol = Chem.RWMol(mol)
-            for atom in rw_mol.GetAtoms():
-                if atom.GetAtomicNum() == 0:  # Dummy atom (*)
-                    atom.SetAtomMapNum(map_num)
-            return rw_mol.GetMol()
-
-        # Process Recap fragments
-        for frag_smiles, node in recap_tree.children.items():
-            frag_mol = node.mol
-            largest_frag = max(frag_smiles.split('.'), key=lambda x: Chem.MolFromSmiles(x).GetNumAtoms())
-            modified = relabel_dummy_atoms(Chem.MolFromSmiles(largest_frag), map_num=1)
-            modified_mols.append(modified)
-            modified_smiles.append(Chem.MolToSmiles(modified))
-
-        # Add parent molecule
-        modified_mols.insert(0, mol)
-        modified_smiles.insert(0, smiles)
-
-        # Display molecules
-        st.image(Draw.MolsToGridImage(modified_mols, molsPerRow=3, subImgSize=(300, 300), legends=modified_smiles))
-        st.success("Recap decomposition completed and molecules displayed.")
-    except Exception as e:
-        st.error(f"Error during Recap decomposition: {e}")
