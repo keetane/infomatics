@@ -7,6 +7,11 @@ import streamlit as st
 from datetime import datetime
 from rdkit.Chem import Recap
 import pubchempy as pcp
+import datetime
+# Get the current timestamp
+now = datetime.datetime.now()
+# Format the timestamp as a string
+time = now.strftime("%Y%m%d_%H%M")
 
 st.set_page_config(
     page_title="REINVENTer 4 Drug Discovery",
@@ -96,7 +101,7 @@ with open(f"{input_dir}/parent.smi", "w") as f:
     f.write(f"{smiles}\n")
 
 # Recap decomposition and molecule visualization
-st.header("Recap Decomposition and Visualization")
+st.header("Children by Recap Decomposition")
 
 mol = Chem.MolFromSmiles(smiles)
 recap_tree = Recap.RecapDecompose(mol)
@@ -134,7 +139,7 @@ st.sidebar.text(os.getcwd())
 st.sidebar.text("Working directory: ")
 st.sidebar.text(wd)
 st.sidebar.header("Sampling Parameters")
-num_smiles = st.sidebar.number_input("Number of SMILES", min_value=1, value=155)
+num_mols = st.sidebar.number_input("Number of SMILES", min_value=1, value=155)
 device = st.sidebar.selectbox("Device", ["mps", "cpu", "cuda"])
 
 unique_molecules = st.sidebar.checkbox("Unique Molecules", value=True)
@@ -156,37 +161,63 @@ model_files = {
 model_file = st.sidebar.selectbox("Model File", options=model_files.keys(), format_func=lambda x: x)
 selected_model_file = model_files[model_file]
 
-import datetime
-# Get the current timestamp
-now = datetime.datetime.now()
-# Format the timestamp as a string
-time = now.strftime("%Y%m%d_%H%M")
-
-if overwrite is True:
-    filename = model_file.split("/")[-1].replace(" ", "_")
-else:
-    filename = model_file.split("/")[-1].replace(" ", "_") + '_' + time
-
 # other options for mol2mol sampling
 sample_stategy = st.sidebar.selectbox("Sampling Strategy", ["beamsearch", 'multinomial'])
 temperature = st.sidebar.number_input("Temperature", min_value=0.0, max_value=1.0, value=1.0, step=0.1)
 
 # Generate TOML file
-def generate_toml(selected_model_file, num_smiles=155, device="mps", show=False, sample_stategy=None, temperature=1.0):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_file = os.path.join(results_dir, selected_model_file+f"_sampling_{timestamp}.csv")
+def generate_toml(method=selected_model_file, num_smiles=num_mols, smiles_file=None, device=device, show=False, sample_strategy=None, temperature=1.0):
+    if method == link:
+        filename = 'LinkInvent'
+    elif method == lib:
+        filename = 'LibInvent'
+    else:
+        filename = method.split("/")[-1].replace(" ", "_")[:-6]
+        
+    if overwrite is not True:
+        filename = method.split("/")[-1].replace(" ", "_") + '_' + time
+    else:
+        pass
+    output_file = os.path.join(results_dir, f"{filename}.csv")
     toml_content = f"""
 run_type = "sampling"
 device = "{device}"
-json_out_config = "_sampling.json"
+json_out_config = "{sampling_log}/_sampling.json"
 
 [parameters]
-model_file = "{selected_model_file}"
+model_file = "{method}"
 output_file = "{output_file}"
 num_smiles = {num_smiles}
-unique_molecules = true
-randomize_smiles = true
 """
+    if unique_molecules is True:
+        toml_content += f'''
+        unique_molecules = true
+        '''
+    else:
+        pass
+    if randomize_smiles is True:
+        toml_content += f'''
+        randomize_smiles = true
+        '''
+    else:
+        pass
+
+    if smiles_file is not None:
+        toml_content += f'''
+        smiles_file = "{smiles_file}"  # 1 compound per line
+        '''
+    if sample_strategy == 'beamsearch':
+        toml += f'''
+        sample_strategy = "beamsearch"  # multinomial or beamsearch (deterministic)
+        '''
+    elif sample_strategy == 'multinomial':
+        toml += f'''
+        sample_strategy = "multinomial"  # multinomial or beamsearch (deterministic)
+        temperature = {temperature} # temperature in multinomial sampling
+        '''
+    else:
+        pass
+
     toml_path = os.path.join(toml_dir, "sampling.toml")
     with open(toml_path, "w") as f:
         f.write(toml_content)
@@ -194,7 +225,7 @@ randomize_smiles = true
 
 # Run REINVENT4
 def run_reinvent(toml_path):
-    log_file = os.path.join(results_dir, "sampling.log")
+    log_file = os.path.join(sampling_log, "sampling.log")
     subprocess.call([f"{home_dir}/miniforge3/envs/r4/bin/reinvent", "-l", log_file, toml_path])
 
 # Display molecules
@@ -204,10 +235,18 @@ def display_molecules(csv_file):
     img = Draw.MolsToGridImage(df.sample(min(len(df), 30)).Mol.tolist(), molsPerRow=5, subImgSize=(300, 200))
     return img
 
+# mol2mol sampling
+if st.sidebar.button('Mol2Mol Sampling'):
+    # Generate TOML file for mol2mol sampling
+    toml_path, output_file = generate_toml(method=selected_model_file, smiles_file=f'{input_dir}/parent.smi', num_smiles=num_mols, device=device)
+    # Run REINVENT4
+    run_reinvent(toml_path)
+    st.success("Sampling completed!")
+
 # LibInvent用の親分子を選択
-st.sidebar.markdown('## LibInvent')
+st.sidebar.markdown('## LibInvent Sampling')
 selected_child = st.sidebar.multiselect(
-    "Select Child Molecule", options=BB_namelist, default=["BB1"], key="child_multiselect"
+    "Select Child Molecule", options=BB_namelist, default=["BB2"], key="child_multiselect"
 )
 if selected_child:
     selected_child_index = BB_namelist.index(selected_child[0])
@@ -218,10 +257,17 @@ else:
     selected_child_smiles = ""
     st.sidebar.text("No parent selected.")
 
+if st.sidebar.button('LibInvent Sampling'):
+    # Generate TOML file for LibInvent
+    toml_path, output_file = generate_toml(method=lib, smiles_file=f'{input_dir}/child.smi', num_smiles=num_mols, device=device)
+    # Run REINVENT4
+    run_reinvent(toml_path)
+    st.success("Sampling completed!")
+
 # LinkInvent用のwarheadを選択
 st.sidebar.markdown('## LinkInvent')
 selected_warhead = st.sidebar.multiselect(
-    "Select Warhead", options=BB_namelist, default=["BB1", "BB2"], key="warhead_multiselect"
+    "Select Warhead", options=BB_namelist, default=["BB1", "BB3"], key="warhead_multiselect"
 )
 if selected_warhead:
     selected_warhead_indices = [BB_namelist.index(w) for w in selected_warhead]
@@ -233,3 +279,9 @@ else:
     selected_warhead_smiles = ""
     st.sidebar.text("No warhead selected.")
 
+if st.sidebar.button('LinkInvnet'):
+    # Generate TOML file for LinkInvent
+    toml_path, output_file = generate_toml(method=link, smiles_file=f'{input_dir}/warheads.smi', num_smiles=num_mols, device=device)
+    # Run REINVENT4
+    run_reinvent(toml_path)
+    st.success("Sampling completed!")
