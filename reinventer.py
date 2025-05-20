@@ -21,10 +21,13 @@ st.set_page_config(
 )
 
 # Streamlit app
-st.title("REINVENTer 4 Drug Discovery")
-st.text("- De Novo Molecular Design with AI by AZ -")
-st.markdown("[Learn more about REINVENT4](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-024-00812-5)")
-st.markdown("---")  # Add a horizontal rule (line)
+st.text("Current directory: " + os.getcwd())
+# st.text("Working directory: " + wd)
+
+# st.title("REINVENTer 4 Drug Discovery")
+# st.text("- De Novo Molecular Design with AI by AZ -")
+# st.markdown("[Learn more about REINVENT4](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-024-00812-5)")
+# st.markdown("---")  # Add a horizontal rule (line)
 
 # Set up directories relative to the script's location
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
@@ -81,7 +84,7 @@ pubchem = os.path.join(priors_dir, "pubchem_ecfp4_with_count_with_rank_reinvent4
 # st.markdown("---")  # Add a horizontal rule (line)
 
 # Fetch SMILES from PubChem
-st.header("Fetch SMILES from PubChem")
+# st.header("Fetch SMILES from PubChem")
 compound_name = st.text_input("Enter compound name", value="ruxolitinib")
 if st.button("Fetch SMILES from PubChem into text_area"):
     try:
@@ -134,10 +137,8 @@ st.image(Draw.MolsToGridImage(warhead_mols, molsPerRow=3, subImgSize=(600,300), 
 
 
 # Sidebar for input parameters
-st.sidebar.text("Current directory: ")
-st.sidebar.text(os.getcwd())
-st.sidebar.text("Working directory: ")
-st.sidebar.text(wd)
+st.sidebar.header("Re:Inventer 4 Drug Discovery")
+st.sidebar.markdown("[Learn more about REINVENT4](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-024-00812-5)")
 st.sidebar.header("Sampling Parameters")
 num_mols = st.sidebar.number_input("Number of SMILES", min_value=1, value=155)
 device = st.sidebar.selectbox("Device", ["mps", "cpu", "cuda"])
@@ -146,7 +147,7 @@ unique_molecules = st.sidebar.checkbox("Unique Molecules", value=True)
 randomize_smiles = st.sidebar.checkbox("Randomize SMILES", value=True)
 overwrite = st.sidebar.checkbox("Overwrite", value=True)
 
-st.sidebar.markdown('## mol2mol sampling')
+st.sidebar.header('mol2mol sampling')
 # Allow users to select a model file from priors_dir
 model_files = {
     "Mol2Mol High Similarity": mol2mol_high,
@@ -244,7 +245,7 @@ if st.sidebar.button('Mol2Mol Sampling'):
     st.success("Sampling completed!")
 
 # LibInvent用の親分子を選択
-st.sidebar.markdown('## LibInvent Sampling')
+st.sidebar.header('LibInvent Sampling')
 selected_child = st.sidebar.multiselect(
     "Select Child Molecule", options=BB_namelist, default=["BB2"], key="child_multiselect"
 )
@@ -265,7 +266,7 @@ if st.sidebar.button('LibInvent Sampling'):
     st.success("Sampling completed!")
 
 # LinkInvent用のwarheadを選択
-st.sidebar.markdown('## LinkInvent')
+st.sidebar.header('LinkInvent')
 selected_warhead = st.sidebar.multiselect(
     "Select Warhead", options=BB_namelist, default=["BB1", "BB3"], key="warhead_multiselect"
 )
