@@ -24,11 +24,6 @@ st.set_page_config(
 st.text("Current directory: " + os.getcwd())
 # st.text("Working directory: " + wd)
 
-# st.title("REINVENTer 4 Drug Discovery")
-# st.text("- De Novo Molecular Design with AI by AZ -")
-# st.markdown("[Learn more about REINVENT4](https://jcheminf.biomedcentral.com/articles/10.1186/s13321-024-00812-5)")
-# st.markdown("---")  # Add a horizontal rule (line)
-
 # Set up directories relative to the script's location
 script_dir = os.path.dirname(os.path.abspath(__file__))  # Get the script's directory
 home_dir = os.path.expanduser("~")  # Get the user's home directory
@@ -46,14 +41,7 @@ os.makedirs(toml_dir, exist_ok=True)  # Create TOML directory if it doesn't exis
 sampling_log = os.path.join(results_dir, 'log')  # Sampling log directory path
 os.makedirs(sampling_log, exist_ok=True)  # Create sampling log directory if it doesn't exist
 
-# # Update paths to be relative to the script's directory
-# toml_dir = os.path.join(wd, 'toml')
-# input = os.path.join(wd, 'input')
-# results_dir = os.path.join(wd, 'results')
-# sampling_log = os.path.join(results_dir, 'log')
-# model = os.path.join(wd, 'model')
-# model_log = os.path.join(model, 'log')
-
+# Set up file paths for priors
 priors_dir = os.path.join(reinvent_dir, "priors")
 reinvent = os.path.join(priors_dir, "reinvent.prior")
 lib = os.path.join(priors_dir, "libinvent.prior")
@@ -67,37 +55,27 @@ mol2mol_similarity = os.path.join(priors_dir, "mol2mol_similarity.prior")
 pubchem = os.path.join(priors_dir, "pubchem_ecfp4_with_count_with_rank_reinvent4_dict_voc.prior")
 
 
-# Main app logic
-# # de novo molecular sampling
-# st.header("De Novo Molecular Sampling")
-# if st.button("Run Sampling"):
-#     if not os.path.exists(model_file):
-#         st.error("Model file does not exist!")
-#     else:
-#         st.info("Generating TOML file...")
-#         toml_path, output_file = generate_toml(model_file, num_smiles, device)
-#         st.info("Running REINVENT4...")
-#         run_reinvent(toml_path)
-#         st.success("Sampling completed!")
-#         st.info("Displaying sampled molecules...")
-#         st.image(display_molecules(output_file))
-# st.markdown("---")  # Add a horizontal rule (line)
-
 # Fetch SMILES from PubChem
-# st.header("Fetch SMILES from PubChem")
-compound_name = st.text_input("Enter compound name", value="ruxolitinib")
-if st.button("Fetch SMILES from PubChem into text_area"):
-    try:
-        smiles = pcp.get_compounds(compound_name, 'name')[0].isomeric_smiles
-        # st.success(f"SMILES for {compound_name}: {smiles}")
-    except Exception as e:
-        st.error(f"Error fetching SMILES for {compound_name}: {e}")
-else:
-    smiles = "C1CCC(C1)[C@@H](CC#N)N2C=C(C=N2)C3=C4C=CNC4=NC=N3"  # Default blank
+st.header("Parent Molecule Drawer")
 
-# Display fetched SMILES
-smiles = st.text_area("enter SMILES", value=smiles, height=68)
-st.image(Draw.MolToImage(Chem.MolFromSmiles(smiles), size=(300, 300)), caption="Parent Molecule")
+# separate with columns
+col1, col2 = st.columns([2, 1])
+with col1:
+
+    compound_name = st.text_input("Enter compound name", value="ruxolitinib")
+    if st.button("Fetch SMILES from PubChem into text_area"):
+        try:
+            smiles = pcp.get_compounds(compound_name, 'name')[0].isomeric_smiles
+        except Exception as e:
+            st.error(f"Error fetching SMILES for {compound_name}: {e}")
+    else:
+        smiles = "C1CCC(C1)[C@@H](CC#N)N2C=C(C=N2)C3=C4C=CNC4=NC=N3"  # Default blank
+
+    # Display fetched SMILES
+    smiles = st.text_area("enter SMILES", value=smiles, height=68)
+
+with col2:
+    st.image(Draw.MolToImage(Chem.MolFromSmiles(smiles), size=(300, 300)), caption="Parent Molecule")
 
 # save SMILES of parent molecule from text_area
 with open(f"{input_dir}/parent.smi", "w") as f:
@@ -147,7 +125,6 @@ unique_molecules = st.sidebar.checkbox("Unique Molecules", value=True)
 randomize_smiles = st.sidebar.checkbox("Randomize SMILES", value=True)
 overwrite = st.sidebar.checkbox("Overwrite", value=True)
 
-st.sidebar.header('mol2mol sampling')
 # Allow users to select a model file from priors_dir
 model_files = {
     "Mol2Mol High Similarity": mol2mol_high,
@@ -161,10 +138,6 @@ model_files = {
 }
 model_file = st.sidebar.selectbox("Model File", options=model_files.keys(), format_func=lambda x: x)
 selected_model_file = model_files[model_file]
-
-# other options for mol2mol sampling
-sample_stategy = st.sidebar.selectbox("Sampling Strategy", ["beamsearch", 'multinomial'])
-temperature = st.sidebar.number_input("Temperature", min_value=0.0, max_value=1.0, value=1.0, step=0.1)
 
 # Generate TOML file
 def generate_toml(method=selected_model_file, num_smiles=num_mols, smiles_file=None, device=device, show=False, sample_strategy=None, temperature=1.0):
@@ -235,6 +208,11 @@ def display_molecules(csv_file):
     PandasTools.AddMoleculeColumnToFrame(df, smilesCol="SMILES", molCol="Mol")
     img = Draw.MolsToGridImage(df.sample(min(len(df), 30)).Mol.tolist(), molsPerRow=5, subImgSize=(300, 200))
     return img
+
+st.sidebar.header('mol2mol sampling')
+# other options for mol2mol sampling
+sample_stategy = st.sidebar.selectbox("Sampling Strategy", ["beamsearch", 'multinomial'])
+temperature = st.sidebar.number_input("Temperature", min_value=0.0, max_value=1.0, value=1.0, step=0.1)
 
 # mol2mol sampling
 if st.sidebar.button('Mol2Mol Sampling'):
