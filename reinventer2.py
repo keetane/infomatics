@@ -117,7 +117,7 @@ st.image(Draw.MolsToGridImage(warhead_mols, molsPerRow=3, subImgSize=(600,300), 
 # Sidebar for input parameters
 st.sidebar.header("Sampling Parameters")
 num_mols = st.sidebar.number_input("Number of SMILES", min_value=1, value=155)
-device = st.sidebar.selectbox("Device", ["mps", "cpu", "cuda"])
+device = st.sidebar.selectbox("Device", ["cpu", "cuda", "mps"])  # "cpu"を先頭に
 
 unique_molecules = st.sidebar.checkbox("Unique Molecules", value=True)
 randomize_smiles = st.sidebar.checkbox("Randomize SMILES", value=True)
@@ -217,9 +217,16 @@ with col1:
     st.markdown('#### Mol2Mol Sampling')
     model_file = st.selectbox("Model File", options=model_files.keys(), format_func=lambda x: x)
     selected_model_file = model_files[model_file]
-    if st.button('Mol2Mol Sampling from Parent'):
+    if st.button('Mol2Mol Sampling from Parent', key="mol2mol_sampling_parent_btn"):
         # Generate TOML file for mol2mol sampling
-        toml_path, output_file = generate_toml(method=selected_model_file, smiles_file=f'{input_dir}/parent.smi', num_smiles=num_mols, device=device, sample_strategy=sample_stategies, temperature=temperatures)
+        toml_path, output_file = generate_toml(
+            method=selected_model_file,
+            smiles_file=f'{input_dir}/parent.smi',
+            num_smiles=num_mols,
+            device=device,
+            sample_strategy=sample_stategies,
+            temperature=temperatures
+        )
         # Run REINVENT4
         run_reinvent(toml_path)
         st.success("Sampling completed!")
@@ -239,9 +246,14 @@ with col2:
         selected_child_smiles = ""
         st.text("No parent selected.")
 
-    if st.button('LibInvent Sampling'):
+    if st.button('LibInvent Sampling', key="libinvent_sampling_btn"):
         # Generate TOML file for LibInvent
-        toml_path, output_file = generate_toml(method=lib, smiles_file=f'{input_dir}/child.smi', num_smiles=num_mols, device=device)
+        toml_path, output_file = generate_toml(
+            method=lib,
+            smiles_file=f'{input_dir}/child.smi',
+            num_smiles=num_mols,
+            device=device
+        )
         # Run REINVENT4
         run_reinvent(toml_path)
         st.success("Sampling completed!")
@@ -262,9 +274,14 @@ with col3:
         selected_warhead_smiles = ""
         st.text("No warhead selected.")
 
-    if st.button('LinkInvnet'):
+    if st.button('LinkInvnet', key="linkinvent_sampling_btn"):
         # Generate TOML file for LinkInvent
-        toml_path, output_file = generate_toml(method=link, smiles_file=f'{input_dir}/warheads.smi', num_smiles=num_mols, device=device)
+        toml_path, output_file = generate_toml(
+            method=link,
+            smiles_file=f'{input_dir}/warheads.smi',
+            num_smiles=num_mols,
+            device=device
+        )
         # Run REINVENT4
         run_reinvent(toml_path)
         st.success("Sampling completed!")
@@ -319,13 +336,23 @@ config = {
 
 
 st.header("Transfer learning from ChEMBL or CSV")
+TL_model_file = st.selectbox("Model File", options=model_files.keys(), format_func=lambda x: x, key="tl_model_file_select")
+selected_TL_model_file = model_files[TL_model_file]
+
 
 # generate toml file for transfer learning
-def TL(TL_input):
+def TL(TL_input, TL_val, TL_method=selected_TL_model_file):        
     TL_input_filename = TL_input.split("/")[-1].replace(".smi", "")
+    TL_method_basename = os.path.basename(TL_method).replace(".prior", "").replace(".model", "")
+    output_model_file = f"{model_dir}/TL_{TL_input_filename}_{TL_method_basename}.model"
+    # deviceを"mps"選択時は"cpu"に強制する（PyTorch capturableエラー対策）
+    safe_device = device
+    if device == "mps":
+        # st.warning("PyTorchのcapturable=Trueエラー回避のため、デバイスを'cpu'に変更します。")
+        safe_device = "cpu"
     TL_toml=f'''
     run_type = "transfer_learning"
-    device = "{device}"  # set torch device e.g. "cpu". For macOS, use "mps"
+    device = "{safe_device}"  # set torch device e.g. "cpu". For macOS, use "mps"
     tb_logdir = "{sampling_log}/tb_TL"  # name of the TensorBoard logging directory
     json_out_config = "{sampling_log}/json_transfer_learning.json"  # write this TOML to JSON
 
@@ -339,10 +366,10 @@ def TL(TL_input):
     # Uncomment one of the comment blocks below.  Each generator needs a model
     # file and possibly a SMILES file with seed structures.
 
-    input_model_file = "{reinvent}" 
+    input_model_file = "{TL_method}" 
     smiles_file = "{TL_input}"  # read 1st column
-    output_model_file = '{model_dir}/TL_{TL_input_filename}.model'  # sampled SMILES and NLL in CSV format
-    validation_smiles_file = "{TL_input}"  # read 1st column
+    validation_smiles_file = "{TL_val}"  # read 1st column
+    output_model_file = '{output_model_file}'  # sampled SMILES and NLL in CSV format
     
     # Define the type of similarity and its parameters
     pairs.type = '{pairs_type}'  # e.g. "tanimoto", "cosine", "dice", "euclidean"
@@ -436,16 +463,34 @@ with col1:
             # 4. 無効なエントリを削除
             df_clean = df.dropna(subset=["smiles"])
 
-            # 5. 保存
-            df_clean[['smiles']].to_csv(input_dir + f'/{selected_target}.smi', sep='\t', index=False)
+            # 5. 学習用とvalidation用のデータセットを分割
+            # ここでは、全体の80%を学習用、20%を検証用に分割
+            df_clean = df_clean.sample(frac=1, random_state=42)  # シャッフル
+            train_size = int(0.8 * len(df_clean))
+            train_df = df_clean.iloc[:train_size]
+            val_df = df_clean.iloc[train_size:]
+            # st.dataframe(train_df, use_container_width=True)
+            # 6. トレーニングデータセットのSMILESを保存
+            input_file = input_dir + f'/{selected_target}_tl.smi'
+            train_df[['smiles']].to_csv(input_file, sep='\t', index=False, header=False)
+            # 7. バリデーションデータセットのSMILESを保存
+            val_file = input_dir + f'/{selected_target}_val.smi'
+            val_df[['smiles']].to_csv(val_file, sep='\t', index=False, header=False)
+            # 8. csvファイルを保存
             df_clean.to_csv(input_dir + f'/{selected_target}.csv', sep='\t', index=False)
-
+            df_clean[['smiles']].to_csv(input_dir + f'/{selected_target}.smi', sep='\t', index=False)
             st.text(f"Saved {len(df_clean)} ligands with largest fragment SMILES to input/{selected_target}.csv and input/{selected_target}.smi")
 
-            # st.dataframe(df_clean, use_container_width=True)
+            # # 5. 保存
+            # # ヘッダーなしで保存
+            # df_clean[['smiles']].to_csv(input_dir + f'/{selected_target}.smi', sep='\t', index=False, header=False)
 
             # 6. TOMLファイルを生成
-            toml_path = TL(input_dir + f'/{selected_target}.smi')
+            toml_path = TL(
+                input_file,  # 学習用SMILESファイル
+                val_file,    # バリデーション用SMILESファイル
+                TL_method=selected_TL_model_file
+            )
 
             # 7. REINVENT4を実行
             run_reinvent(toml_path)
@@ -457,20 +502,88 @@ with col2:
         try:
             df = pd.read_csv(uploaded_file, sep='\t')
             if 'smiles' in df.columns:
-                # overwrite_TL = st.checkbox("overwrite TL model", value=True)
                 if st.button('Transfer learning from csv'):
                     # Save uploaded file to input_dir and use its path for TL
                     csv_save_path = os.path.join(input_dir, uploaded_file.name)
                     with open(csv_save_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
-                    # Generate .smi file from the 'smiles' column
-                    smi_save_path = csv_save_path.rsplit('.', 1)[0] + ".smi"
-                    df[['smiles']].to_csv(smi_save_path, sep='\t', index=False)
-                    toml_path = TL(smi_save_path)
-                    # Run REINVENT4
+                    # Split into train/val for TL
+                    df = df.sample(frac=1, random_state=42)  # Shuffle
+                    train_size = int(0.8 * len(df))
+                    train_df = df.iloc[:train_size]
+                    val_df = df.iloc[train_size:]
+                    smi_save_path = csv_save_path.rsplit('.', 1)[0] + "_tl.smi"
+                    val_smi_save_path = csv_save_path.rsplit('.', 1)[0] + "_val.smi"
+                    train_df[['smiles']].to_csv(smi_save_path, sep='\t', index=False, header=False)
+                    val_df[['smiles']].to_csv(val_smi_save_path, sep='\t', index=False, header=False)
+                    toml_path = TL(smi_save_path, val_smi_save_path, TL_method=selected_TL_model_file)
                     run_reinvent(toml_path)
                     st.success("Transfer learning from CSV completed!")
             else:
                 st.error("CSV file must contain a 'smiles' column.")
         except Exception as e:
             st.error(f"Error reading CSV file: {e}")
+
+# Sampling from TL model
+st.header("Sampling from Transfer Learning Model")
+tl_model_files = [f for f in os.listdir(model_dir) if f.endswith(".model")]
+TL_model = st.selectbox("Select TL Model", options=tl_model_files, key="tl_model_select")
+
+# Generate TOML file for sampling from TL model
+def TL_toml(method=TL_model, num_smiles=num_mols, smiles_file=None, device=device, show=False, sample_strategy=None, temperature=1.0):
+    filename = method.split("/")[-1].replace(" ", "_")[:-6]
+        
+    if overwrite is not True:
+        filename = method + '_' + time
+    else:
+        pass
+    output_file = os.path.join(results_dir, f"{filename}.csv")
+    toml_content = f"""
+run_type = "sampling"
+device = "{device}"
+json_out_config = "{sampling_log}/_TL_sampling.json"
+
+[parameters]
+model_file = "{method}"
+output_file = "{output_file}"
+num_smiles = {num_smiles}
+"""
+    if unique_molecules is True:
+        toml_content += f'''
+        unique_molecules = true
+        '''
+    if randomize_smiles is True:
+        toml_content += f'''
+        randomize_smiles = true
+        '''
+
+# Fix: use toml_content instead of undefined toml
+    if sample_strategy == 'beamsearch':
+        toml_content += f'''
+        sample_strategy = "beamsearch"  # multinomial or beamsearch (deterministic)
+        '''
+    elif sample_strategy == 'multinomial':
+        toml_content += f'''
+        sample_strategy = "multinomial"  # multinomial or beamsearch (deterministic)
+        temperature = {temperature} # temperature in multinomial sampling
+        '''
+
+    toml_path = os.path.join(toml_dir, "sampling.toml")
+    with open(toml_path, "w") as f:
+        f.write(toml_content)
+    return toml_path, output_file
+
+
+if st.button("Sample from TL Model", key="sample_from_tl_model_btn"):
+    selected_tl_model = st.session_state.tl_model_select
+    toml_path, output_file = generate_toml(
+        method=os.path.join(model_dir, selected_tl_model),
+        # smiles_file=f"{input_dir}/parent.smi",
+
+        num_smiles=num_mols,
+        device=device,
+        sample_strategy=sample_stategies,
+        temperature=temperatures
+    )
+    run_reinvent(toml_path)
+    st.success(f"Sampling from TL model {selected_tl_model} completed!")
