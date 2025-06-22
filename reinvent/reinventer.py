@@ -79,36 +79,28 @@ if os.path.exists(results_dir_to_search) and os.path.isdir(results_dir_to_search
             mols_path_index = display_files.index(selected_file) - 1 # Adjust index because of the inserted default option
             mols_path = csv_files[mols_path_index]
             # Debugging: Show the assigned mols_path
+
+            # --- メインコンテンツの表示 ---
+            df = pd.read_csv(mols_path, sep=',', encoding='utf-8') if mols_path else pd.DataFrame()
+            df = df.sort_values(by='NLL', ascending=True)
+            df['ROMol'] = df['SMILES'].apply(lambda x : Chem.MolFromSmiles(x))
+            # st.dataframe(df) if mols_path else st.info("CSVファイルが選択されていません。")
+            img = Draw.MolsToGridImage(
+                df['ROMol'],
+                molsPerRow=3,
+                subImgSize=(300, 200),
+                legends=df['NLL'].astype(str).tolist() if 'NLL' in df.columns else None
+            )
+
+            st.image(img, caption="Molecules from the selected CSV file", use_column_width=True)
+
         else:
             st.sidebar.info("CSVファイルをサイドバーから選択してください。")
     else:
         st.sidebar.warning("resultsディレクトリ内にCSVファイルが見つかりません。")
 else:
     st.sidebar.error("resultsディレクトリが見つからないか、アクセスできません。")
+    st.error("resultsディレクトリが見つからないか、アクセスできません。")
 
-st.sidebar.text(mols_path)
 
 
-# --- メインコンテンツの表示 ---
-df = pd.read_csv(mols_path, sep=',', encoding='utf-8') if mols_path else pd.DataFrame()
-df = df.sort_values(by='NLL', ascending=True)
-df['ROMol'] = df['SMILES'].apply(lambda x : Chem.MolFromSmiles(x))
-# st.dataframe(df) if mols_path else st.info("CSVファイルが選択されていません。")
-img = Draw.MolsToGridImage(
-    df['ROMol'],
-    molsPerRow=3,
-    subImgSize=(300, 200),
-    legends=df['NLL'].astype(str).tolist() if 'NLL' in df.columns else None
-)
-# img = Draw.MolToImage(
-#     df['ROMol'][0],
-#     size=(300, 300),
-#     kekulize=True,
-#     wedgeBonds=True,
-#     # fitImage=True
-# )
-
-st.text(
-    type(df['NLL'][0])
-)
-st.image(img, caption="Molecules from the selected CSV file", use_column_width=True)
